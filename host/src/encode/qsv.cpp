@@ -159,6 +159,7 @@ bool QsvEncoder::Configure() {
         Log("QSV: MFXVideoENCODE_Init failed: %d", static_cast<int>(st));
         return false;
     }
+    user_param_ = par;
     param_ = par;
     configured_ = true;
 
@@ -227,7 +228,10 @@ bool QsvEncoder::Encode(ID3D11Texture2D* frame, EncodedFrame& out) {
 bool QsvEncoder::SetBitrate(uint32_t bitrate) {
     if (!session_ || !configured_ || !enc_reset_)
         return false;
-    mfxVideoParam par = param_;
+    /* Reset: pass the pre-Init (user) param with only the rate-control fields
+     * changed, as the Intel sample does; the post-Init negotiated copy can be
+     * rejected with MFX_ERR_INCOMPATIBLE_VIDEO_PARAM on some runtimes. */
+    mfxVideoParam par = user_param_;
     par.mfx.TargetKbps = static_cast<mfxU16>(bitrate / 1000);
     par.mfx.MaxKbps = static_cast<mfxU16>(bitrate * 12 / 10 / 1000);
     par.mfx.BufferSizeInKB =

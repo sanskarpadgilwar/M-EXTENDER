@@ -41,7 +41,7 @@ public:
     bool Start(uint32_t w, uint32_t h, uint32_t fps, uint32_t bitrate) override;
     bool Encode(ID3D11Texture2D* frame, EncodedFrame& out) override;
     bool RequestKeyframe() override { keyframe_requested_ = true; return true; }
-    bool SetBitrate(uint32_t bitrate);
+    bool SetBitrate(uint32_t bitrate) override;
     const char* Name() const override { return "nvenc"; }
 
 private:

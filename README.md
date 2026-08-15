@@ -45,9 +45,9 @@ cmake --build host/build --config Release
 :: binary at host/build/Release/twinhost.exe
 ```
 
-C++/WinRT (touch injection) is auto-detected from the installed Windows SDK;
-if absent, the build still succeeds with touch injection disabled. The QSV and
-AMF encoders are enabled automatically when their headers are present.
+Touch injection uses the USER32 `InitializeTouchInjection`/`InjectTouchInput`
+API (declared in `winuser.h`, no extra dependencies). The QSV and AMF encoders
+are enabled automatically when their headers are present.
 
 ### Tablet
 Open `tablet/` in Android Studio (it generates the Gradle wrapper) and run on a
@@ -84,8 +84,7 @@ Done:
   system-memory input, keyframe-on-demand, dynamic bitrate via Reset)
 - **host** AMF H.264 encoder (VCE via shared DX11 NV12 surfaces, dynamic DLL
   load, keyframe-on-demand, dynamic bitrate)
-- **host** input: mouse (`SendInput`) + touch/stylus (`InjectTouchInput` via
-  C++/WinRT on a dedicated STA thread)
+- **host** input: mouse (`SendInput`) + touch/stylus (USER32 `InjectTouchInput`)
 - **tablet** connect UI, TCP client, MediaCodec HW decode, multitouch+stylus
   input sender
 - **driver/** UMDF2 IddCx virtual display driver (adapter + EDID monitor +
@@ -93,12 +92,17 @@ Done:
   scripts). API usage grounded against the MIT VirtualDrivers fork.
 
 Remaining:
-1. Build & test-sign the driver on a real machine (no toolchain on this box),
-   and validate the mode list against the target tablet.
-2. Adaptive bitrate + resolution scaling under congestion.
+1. Build & test-sign the driver on a real machine (host toolchain is in place;
+   the WDK 10.0.22621 workload still needs installing), and validate the mode
+   list against the target tablet.
+2. Resolution scaling under congestion (bitrate control is wired). Note: QSV
+   dynamic bitrate needs a driver whose `MFXVideoENCODE_Reset` supports it —
+   rejected with `MFX_ERR_INCOMPATIBLE_VIDEO_PARAM` on the 22.430.19.0
+   `libmfxhw64.dll` runtime.
 3. Audio (WASAPI loopback → AAC → AudioTrack).
 4. True pen injection (WISP/HID) instead of stylus-as-touch.
 5. Wi-Fi polish (client auto-reconnect, stats overlay).
+6. Runtime validation of the NVENC and AMF paths on machines with NVIDIA/AMD GPUs.
 
 ## Latency budget (USB, hardware encode)
 
@@ -115,5 +119,7 @@ Remaining:
 
 - A broken virtual display driver can disrupt display startup — keep a recovery
   path (safe mode, `pnputil /delete-driver`).
-- `InjectTouchInput` needs `Windows.UI.Input.Injection` (C++/WinRT) — stubbed.
+- `InjectTouchInput` (USER32) sends touch to the interactive desktop of the
+  session the host runs in; it must therefore run in the user's session, not a
+  service.
 - MediaCodec `KEY_LOW_LATENCY` is only honored on API 29+ and varies by device.

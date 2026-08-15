@@ -79,7 +79,8 @@ private:
     /* 32-byte aligned buffers (mfxBitstream.Data and frame data require it). */
     detail::AlignedBytes nv12_; /* enc_w*enc_h + enc_w*enc_h/2 */
     detail::AlignedBytes bs_;   /* output bitstream capacity */
-    mfxVideoParam param_{};
+    mfxVideoParam param_{};      /* post-Init (negotiated) */
+    mfxVideoParam user_param_{}; /* pre-Init (as configured) */
     mfxExtCodingOption2 co2_{};
     mfxExtBuffer* ext_params_[1] = {&co2_.Header};
 };

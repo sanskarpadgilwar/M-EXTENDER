@@ -92,6 +92,13 @@ void AddHw(std::vector<twin::Encoder*>& out, twin::Encoder& enc, const Args& arg
     out.push_back(&enc);
 }
 
+/* Keeps SP_CTL_SET_BITRATE requests within what the encoders accept. */
+uint32_t ClampBitrate(uint32_t b) {
+    constexpr uint32_t kMin = 250'000;     /* 0.25 Mbps */
+    constexpr uint32_t kMax = 40'000'000;  /* 40 Mbps */
+    return b < kMin ? kMin : (b > kMax ? kMax : b);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -233,7 +240,18 @@ int main(int argc, char** argv) {
                 enc->RequestKeyframe();
                 twin::Log("keyframe requested by tablet");
             } else if (type == SP_MSG_CONTROL) {
-                /* bitrate/preset changes land here */
+                if (payload.size() >= sizeof(sp_control)) {
+                    const auto* ctl =
+                        reinterpret_cast<const sp_control*>(payload.data());
+                    if (ctl->type == SP_CTL_SET_BITRATE) {
+                        const uint32_t bitrate = ClampBitrate(ctl->value);
+                        if (enc->SetBitrate(bitrate))
+                            twin::Log("bitrate set to %u bps", bitrate);
+                        else
+                            twin::Log("bitrate control unsupported on %s",
+                                      enc->Name());
+                    }
+                }
             } else if (type == SP_MSG_ERROR) {
                 twin::Log("tablet error frame");
             }
