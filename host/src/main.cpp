@@ -48,7 +48,6 @@ Args ParseArgs(int argc, char** argv) {
 
 HMONITOR ResolveMonitor(uintptr_t idx) {
     if (idx == 0) return MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
-    HMONITOR found = nullptr;
     struct Ctx {
         uintptr_t idx;
         HMONITOR found;
@@ -67,7 +66,7 @@ HMONITOR ResolveMonitor(uintptr_t idx) {
 
 /* Serializes NAL units into a video-frame payload:
  *   uint32 nals; repeated { uint32 len; uint8 data[len]; } */
-std::vector<uint8_t> BuildVideoPayload(const EncodedFrame& f) {
+std::vector<uint8_t> BuildVideoPayload(const twin::EncodedFrame& f) {
     std::vector<uint8_t> out;
     auto append_u32 = [&out](uint32_t v) {
         const uint8_t b[4] = {static_cast<uint8_t>(v), static_cast<uint8_t>(v >> 8),
@@ -85,8 +84,7 @@ std::vector<uint8_t> BuildVideoPayload(const EncodedFrame& f) {
 /* Picks an encoder: hardware first (NVENC, then QSV, then AMF), NullEncoder
  * (raw RGBA) as the CPU fallback. --raw forces the NullEncoder path; --encoder
  * overrides the candidate order. */
-template <typename T>
-void AddHw(std::vector<T*>& out, T& enc, const Args& args) {
+void AddHw(std::vector<twin::Encoder*>& out, twin::Encoder& enc, const Args& args) {
     if (args.keep_raw)
         return;
     if (!args.encoder.empty() && args.encoder != enc.Name())

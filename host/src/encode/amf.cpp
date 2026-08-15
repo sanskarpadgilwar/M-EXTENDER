@@ -66,7 +66,7 @@ bool AmfEncoder::Start(uint32_t w, uint32_t h, uint32_t fps, uint32_t bitrate) {
         Stop();
         return false;
     }
-    res = ctx_->InitDX11(device_.Get(), AMF_DX11_0);
+    res = ctx_->InitDX11(device_.Get(), amf::AMF_DX11_0);
     if (res != AMF_OK) {
         Log("AMF: InitDX11 failed: %d", static_cast<int>(res));
         Stop();
@@ -102,7 +102,7 @@ bool AmfEncoder::Start(uint32_t w, uint32_t h, uint32_t fps, uint32_t bitrate) {
                           (amf_int64)AMF_VIDEO_ENCODER_PROFILE_MAIN);
     encoder_->SetProperty(AMF_VIDEO_ENCODER_QUERY_TIMEOUT, (amf_int64)1000);
 
-    res = encoder_->Init(AMF_SURFACE_NV12, (amf_int32)enc_w_, (amf_int32)enc_h_);
+    res = encoder_->Init(amf::AMF_SURFACE_NV12, (amf_int32)enc_w_, (amf_int32)enc_h_);
     if (res != AMF_OK) {
         Log("AMF: encoder Init failed: %d", static_cast<int>(res));
         Stop();

@@ -48,6 +48,8 @@ private:
     bool LoadApi();
     bool OpenSession(ID3D11Device* device);
     bool Configure();
+    bool RegisterInput(ID3D11Texture2D* frame);
+    bool CreateBitstream();
     void Stop();
 
     uint32_t w_ = 0, h_ = 0, fps_ = 30, bitrate_ = 0;
@@ -63,6 +65,7 @@ private:
     uint32_t frame_index_ = 0;
     bool configured_ = false;
     NV_ENC_INITIALIZE_PARAMS init_params_{};
+    NV_ENC_CONFIG config_{};
 };
 
 }  // namespace twin
