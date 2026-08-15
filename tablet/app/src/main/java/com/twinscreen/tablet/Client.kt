@@ -3,7 +3,6 @@ package com.twinscreen.tablet
 import android.os.Build
 import android.util.Log
 import java.io.DataInputStream
-import java.io.EOFException
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -17,11 +16,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - Sends the handshake on connect, then streams input batches from the UI thread.
  * - Receive loop decodes frames into [frames] (bounded to the newest N).
  * - [requestKeyframe] asks the host for an IDR whenever the decoder needs one.
+ * - Reconnects automatically with exponential backoff until [disconnect] is
+ *   called; [onReconnecting] reports each retry attempt.
+ * - Tracks receive-side stats ([stats]) for the on-screen overlay.
  */
 class Client(
-    private val host: String,
-    private val port: Int,
+    val host: String,
+    val port: Int,
     private val onConnected: (Protocol.Ack) -> Unit,
+    private val onReconnecting: (attempt: Int) -> Unit,
     private val onDisconnected: () -> Unit,
 ) : Thread("twin-client") {
 
@@ -29,6 +32,9 @@ class Client(
         private const val TAG = "TwinClient"
         private const val CONNECT_TIMEOUT_MS = 5000
         private const val MAX_QUEUED_FRAMES = 4
+        private const val RECONNECT_BASE_MS = 1000L
+        private const val RECONNECT_MAX_MS = 8000L
+        private const val STATS_WINDOW_MS = 1000L
     }
 
     private val socketLock = Object()
@@ -36,17 +42,45 @@ class Client(
     private var out: java.io.OutputStream? = null
     private var seq = 0L
     private var connected = AtomicBoolean(false)
+    private val stopRequested = AtomicBoolean(false)
 
     val frames = ConcurrentLinkedQueue<Protocol.VideoFrame>()
     @Volatile
     var ack: Protocol.Ack? = null
         private set
 
+    // ---- receive stats (updated on the client thread) ----
+    @Volatile
+    var recvFps = 0f
+        private set
+    @Volatile
+    var recvMbps = 0f
+        private set
+    @Volatile
+    var queueDepth = 0
+        private set
+    @Volatile
+    var reconnectActive = false
+        private set
+    @Volatile
+    var reconnectAttempt = 0
+        private set
+
+    private var windowStartMs = 0L
+    private var windowFrames = 0
+    private var windowBytes = 0L
+
+    data class Stats(val fps: Float, val mbps: Float, val queueDepth: Int)
+
+    fun stats(): Stats = Stats(recvFps, recvMbps, queueDepth)
+
     fun isConnected(): Boolean = connected.get()
 
     fun nextFrame(): Protocol.VideoFrame? = frames.poll()
 
+    /** Stops the client for good; the reconnect loop exits and [onDisconnected] fires. */
     fun disconnect() {
+        stopRequested.set(true)
         connected.set(false)
         synchronized(socketLock) {
             try {
@@ -55,12 +89,44 @@ class Client(
             }
             socket = null
         }
+        interrupt() // wake up from reconnect backoff sleep
     }
 
     override fun run() {
+        while (!stopRequested.get()) {
+            val input = tryConnect()
+            if (input != null) {
+                // Connected: block in the receive loop until the link drops.
+                reconnectActive = false
+                reconnectAttempt = 0
+                requestKeyframe()
+                receiveLoop(input)
+                connected.set(false)
+                synchronized(socketLock) {
+                    try {
+                        socket?.close()
+                    } catch (_: IOException) {
+                    }
+                    socket = null
+                    out = null
+                }
+                frames.clear()
+                queueDepth = 0
+            }
+            if (stopRequested.get()) break
+            scheduleReconnect()
+        }
+        onDisconnected()
+    }
+
+    private fun tryConnect(): DataInputStream? {
         val sock = Socket()
         try {
             sock.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+            if (stopRequested.get()) {
+                sock.close()
+                return null
+            }
             sock.tcpNoDelay = true
             sock.soTimeout = 0
             synchronized(socketLock) {
@@ -79,32 +145,50 @@ class Client(
             val ack = readAck(input)
             if (ack.protoVersion != Protocol.VERSION) {
                 Log.e(TAG, "version mismatch: host ${ack.protoVersion}")
-                onDisconnected()
-                return
+                throw IOException("protocol version mismatch")
             }
             this.ack = ack
             connected.set(true)
             onConnected(ack)
-            requestKeyframe()
-            receiveLoop(input)
+            return input
         } catch (e: Exception) {
-            Log.i(TAG, "connection ended: $e")
-        } finally {
+            Log.i(TAG, "connect failed: $e")
             connected.set(false)
             try {
                 sock.close()
             } catch (_: IOException) {
             }
-            onDisconnected()
+            synchronized(socketLock) {
+                if (socket === sock) {
+                    socket = null
+                    out = null
+                }
+            }
+            return null
+        }
+    }
+
+    private fun scheduleReconnect() {
+        reconnectActive = true
+        val delayMs = (RECONNECT_BASE_MS shl reconnectAttempt.coerceAtMost(3))
+            .coerceAtMost(RECONNECT_MAX_MS)
+        reconnectAttempt++
+        Log.w(TAG, "connection lost; retrying in ${delayMs}ms (attempt $reconnectAttempt)")
+        onReconnecting(reconnectAttempt)
+        try {
+            Thread.sleep(delayMs)
+        } catch (_: InterruptedException) {
+            stopRequested.set(true)
         }
     }
 
     private fun receiveLoop(input: DataInputStream) {
         val header = ByteArray(Protocol.HEADER_SIZE)
-        while (connected.get()) {
+        windowStartMs = System.currentTimeMillis()
+        while (connected.get() && !stopRequested.get()) {
             try {
                 input.readFully(header)
-            } catch (e: EOFException) {
+            } catch (_: IOException) {
                 return
             }
             val b = ByteBuffer.wrap(header).order(java.nio.ByteOrder.LITTLE_ENDIAN)
@@ -121,16 +205,38 @@ class Client(
             }
 
             val payload = ByteArray(len)
-            input.readFully(payload)
+            try {
+                input.readFully(payload)
+            } catch (_: IOException) {
+                return
+            }
             when (type) {
                 Protocol.MSG_VIDEO_FRAME -> {
                     val f = Protocol.parseVideoFrame(payload)
                     while (frames.size >= MAX_QUEUED_FRAMES) frames.poll()
                     frames.add(f)
+                    queueDepth = frames.size
+                    accumulateStats(payload.size)
                 }
                 Protocol.MSG_CONTROL -> { /* bitrate/stats updates; ignore for now */ }
                 Protocol.MSG_ERROR -> Log.w(TAG, "host error frame")
             }
+        }
+    }
+
+    private fun accumulateStats(bytes: Int) {
+        windowFrames++
+        windowBytes += bytes.toLong()
+        val now = System.currentTimeMillis()
+        if (now - windowStartMs >= STATS_WINDOW_MS) {
+            val secs = (now - windowStartMs) / 1000f
+            if (secs > 0f) {
+                recvFps = windowFrames / secs
+                recvMbps = windowBytes * 8f / (secs * 1_000_000f)
+            }
+            windowFrames = 0
+            windowBytes = 0
+            windowStartMs = now
         }
     }
 

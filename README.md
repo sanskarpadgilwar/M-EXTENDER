@@ -87,6 +87,8 @@ Done:
 - **host** input: mouse (`SendInput`) + touch/stylus (USER32 `InjectTouchInput`)
 - **tablet** connect UI, TCP client, MediaCodec HW decode, multitouch+stylus
   input sender
+- **tablet** Wi-Fi polish: auto-reconnect with exponential backoff +
+  on-screen stats overlay (fps, Mbps, queue depth, connection state)
 - **driver/** UMDF2 IddCx virtual display driver (adapter + EDID monitor +
   `option.txt` mode list, ack-and-drop swap-chain processor, build/install
   scripts). API usage grounded against the MIT VirtualDrivers fork.
@@ -101,8 +103,7 @@ Remaining:
    `libmfxhw64.dll` runtime.
 3. Audio (WASAPI loopback → AAC → AudioTrack).
 4. True pen injection (WISP/HID) instead of stylus-as-touch.
-5. Wi-Fi polish (client auto-reconnect, stats overlay).
-6. Runtime validation of the NVENC and AMF paths on machines with NVIDIA/AMD GPUs.
+5. Runtime validation of the NVENC and AMF paths on machines with NVIDIA/AMD GPUs.
 
 ## Latency budget (USB, hardware encode)
 
