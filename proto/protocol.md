@@ -78,7 +78,9 @@ Rules:
 - A DOWN must be followed by an UP or CANCEL for the same pointer_id before a
   new DOWN with that id.
 - A stylus contact uses the STYLUS_* types (so the host can route to pen-aware
-  injection when available; MVP injects as touch).
+  injection; `tilt_x/tilt_y` are tenths of a degree, `pressure` 0..255). The
+  host injects these as real pen input via the synthetic-pointer API; on hosts
+  without it (pre-1809) they act as touch.
 - Batch multiple pointers in one `SP_MSG_INPUT_BATCH` to cut overhead.
 
 ## Control

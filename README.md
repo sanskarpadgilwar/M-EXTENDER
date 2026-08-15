@@ -93,6 +93,10 @@ Done:
   `DXGI_ERROR_ACCESS_LOST` (mode change, lock screen, driver reset) with a 1s
   retry backoff, so streaming resumes instead of going deaf
 - **host** input: mouse (`SendInput`) + touch/stylus (USER32 `InjectTouchInput`)
+- **host** true pen injection: `CreateSyntheticPointerDevice(PT_PEN)` +
+  `InjectSyntheticPointerInput` (winuser.h, Win10 1809+) — real pen through the
+  pointer pipeline with pressure (0..1024) and tilt (degrees); stylus falls
+  back to touch routing if the API is unavailable
 - **tablet** connect UI, TCP client, MediaCodec HW decode, multitouch+stylus
   input sender
 - **host+tablet** audio: WASAPI loopback capture → Media Foundation AAC-LC
@@ -109,8 +113,10 @@ Remaining:
 1. Build & test-sign the driver on a real machine (host toolchain is in place;
    the WDK 10.0.22621 workload still needs installing), and validate the mode
    list against the target tablet.
-2. True pen injection (WISP/HID) instead of stylus-as-touch.
-3. Runtime validation of the NVENC and AMF paths on machines with NVIDIA/AMD GPUs.
+2. Runtime validation of the NVENC and AMF paths on machines with NVIDIA/AMD GPUs.
+3. Pen-injection validation with a real pressure stylus on the tablet (the API
+   path is implemented; tilt mapping is a simplification of Android's single
+   AXIS_TILT into Windows tiltX/tiltY).
 
 ## Latency budget (USB, hardware encode)
 

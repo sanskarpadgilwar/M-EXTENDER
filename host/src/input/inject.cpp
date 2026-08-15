@@ -8,6 +8,26 @@ namespace twin {
 
 namespace {
 
+/* Converts a tablet stylus event into the matching pen pointer flags. */
+DWORD PenFlagsForType(uint8_t type) {
+    switch (type) {
+        case SP_INPUT_STYLUS_DOWN:
+            return POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE |
+                   POINTER_FLAG_INCONTACT | POINTER_FLAG_FIRSTBUTTON |
+                   POINTER_FLAG_PRIMARY;
+        case SP_INPUT_STYLUS_MOVE:
+            return POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE |
+                   POINTER_FLAG_INCONTACT | POINTER_FLAG_FIRSTBUTTON |
+                   POINTER_FLAG_PRIMARY;
+        case SP_INPUT_STYLUS_UP:
+            return POINTER_FLAG_UP;
+        case SP_INPUT_CANCEL:
+            return POINTER_FLAG_UP | POINTER_FLAG_CANCELED;
+        default:
+            return 0;
+    }
+}
+
 /* Converts a tablet stylus event into the matching touch pointer flags. */
 DWORD TouchFlagsForType(uint8_t type) {
     switch (type) {
@@ -43,6 +63,17 @@ bool InputInjector::Init(int32_t offset_x, int32_t offset_y, uint32_t monitor_w,
     } else {
         touch_ok_ = true;
     }
+
+    /* Real pen input via the synthetic-pointer pipeline (Win10 1809+).
+     * NULL on older systems; stylus then falls back to touch routing. */
+    pen_dev_ = CreateSyntheticPointerDevice(PT_PEN, 1, POINTER_FEEDBACK_NONE);
+    if (!pen_dev_) {
+        Log("pen injection init failed: %u (stylus will act as touch)",
+            GetLastError());
+        pen_ok_ = false;
+    } else {
+        pen_ok_ = true;
+    }
     return true;
 }
 
@@ -60,8 +91,17 @@ void InputInjector::InjectBatch(const sp_input_batch* batch) {
             case SP_INPUT_STYLUS_DOWN:
             case SP_INPUT_STYLUS_MOVE:
             case SP_INPUT_STYLUS_UP:
-                /* MVP: stylus acts as touch. TODO(pen): WISP injection. */
-                InjectTouch(ev->x, ev->y, ev->type, ev->pointer_id);
+            case SP_INPUT_CANCEL:
+                if (pen_ok_ && ev->type != SP_INPUT_CANCEL) {
+                    InjectPen(ev->x, ev->y, ev->type, ev->pressure,
+                              ev->tilt_x, ev->tilt_y);
+                } else if (pen_ok_) {
+                    /* Cancel releases the pen; drop the stale coordinates. */
+                    InjectPen(0, 0, ev->type, 0, 0, 0);
+                } else {
+                    /* Fallback: stylus acts as touch (no pen pipeline). */
+                    InjectTouch(ev->x, ev->y, ev->type, ev->pointer_id);
+                }
                 break;
             default:
                 break;
@@ -131,6 +171,41 @@ void InputInjector::InjectTouch(uint16_t x, uint16_t y, uint8_t type,
     }
 }
 
-InputInjector::~InputInjector() = default;
+void InputInjector::InjectPen(uint16_t x, uint16_t y, uint8_t type,
+                              uint8_t pressure, int16_t tilt_x,
+                              int16_t tilt_y) {
+    if (!pen_ok_) return;
+
+    POINTER_PEN_INFO ppi{};
+    ppi.pointerInfo.pointerType = PT_PEN;
+    ppi.pointerInfo.pointerId = 0;
+    ppi.pointerInfo.pointerFlags = PenFlagsForType(type);
+    ppi.pointerInfo.ptPixelLocation.x = offset_x_ + x;
+    ppi.pointerInfo.ptPixelLocation.y = offset_y_ + y;
+    ppi.penMask = PEN_MASK_PRESSURE | PEN_MASK_TILT_X | PEN_MASK_TILT_Y;
+    ppi.pressure = (static_cast<uint32_t>(pressure) * 1024u) / 255u;
+    ppi.tiltX = tilt_x / 10; /* wire: tenths of degree -> degrees */
+    ppi.tiltY = tilt_y / 10;
+
+    POINTER_TYPE_INFO info{};
+    info.type = PT_PEN;
+    info.penInfo = ppi;
+
+    if (!InjectSyntheticPointerInput(pen_dev_, &info, 1)) {
+        /* ERROR_NOT_READY means events arrived too close together; the next
+         * one will carry the state. */
+        DWORD err = GetLastError();
+        if (err != ERROR_NOT_READY) {
+            Log("pen injection failed: %u", err);
+        }
+    }
+}
+
+InputInjector::~InputInjector() {
+    if (pen_dev_) {
+        DestroySyntheticPointerDevice(pen_dev_);
+        pen_dev_ = nullptr;
+    }
+}
 
 }  // namespace twin

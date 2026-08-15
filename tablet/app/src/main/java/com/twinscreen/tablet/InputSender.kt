@@ -68,8 +68,10 @@ class InputSender(
         val y = ((e.getY(index) / vh) * dy).toInt().coerceIn(0, dy)
         val pressure = (e.getPressure(index).coerceIn(0f, 1f) * 255).toInt()
         val stylus = isStylus(e, index)
-        val tiltX = if (stylus) (e.getAxisValue(MotionEvent.AXIS_ORIENTATION, index) * 57.29578).toInt() else 0
-        val tiltY = if (stylus) (e.getAxisValue(MotionEvent.AXIS_TILT, index) * 57.29578).toInt() else 0
+        // Radians -> tenths of a degree (protocol.md); AXIS_ORIENTATION is the
+        // stylus roll angle, AXIS_TILT its inclination from the screen normal.
+        val tiltX = if (stylus) (e.getAxisValue(MotionEvent.AXIS_ORIENTATION, index) * 572.9578).toInt() else 0
+        val tiltY = if (stylus) (e.getAxisValue(MotionEvent.AXIS_TILT, index) * 572.9578).toInt() else 0
 
         return Protocol.InputEvent(
             x = x,
