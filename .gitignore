@@ -1,0 +1,27 @@
+# Host (CMake / VS)
+host/build/
+.vs/
+CMakeUserPresets.json
+host/third_party/nvenc/nvEncodeAPI.h
+host/third_party/qsv/api/
+host/third_party/qsv/repo/
+host/third_party/amf/include/
+host/third_party/amf/repo/
+
+# Driver (WDK / MSBuild)
+driver/out/
+
+# Android
+.gradle/
+build/
+local.properties
+captures/
+*.apk
+*.aab
+
+# IDE
+.idea/
+*.iml
+
+# Misc
+*.log

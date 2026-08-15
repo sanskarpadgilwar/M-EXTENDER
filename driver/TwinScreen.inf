@@ -1,0 +1,77 @@
+; TwinScreen.inf - UMDF2 indirect display driver (IddCx)
+;
+; Presents a virtual monitor; frames are captured in user mode by twinhost.
+; Grounded against the VirtualDrivers/Virtual-Display-Driver (MIT) INF.
+
+[Version]
+Signature   = "$Windows NT$"
+ClassGUID   = {4D36E968-E325-11CE-BFC1-08002BE10318}
+Class       = Display
+ClassVer    = 2.0
+Provider    = %ManufacturerName%
+CatalogFile = TwinScreen.cat
+DriverVer   = 08/15/2026,1.0.0.0
+PnPLockdown = 1
+
+[Manufacturer]
+%ManufacturerName%=Standard,NT$ARCH$
+
+[Standard.NT$ARCH$]
+%DeviceName%=TwinScreen_Install, Root\TwinScreen
+
+[SourceDisksFiles]
+TwinScreen.dll=1
+
+[SourceDisksNames]
+1 = %DiskName%
+
+; ====================== UMDF Device ======================
+
+[TwinScreen_Install.NT]
+CopyFiles=UMDriverCopy
+
+[TwinScreen_Install.NT.hw]
+AddReg = TwinScreen_HardwareDeviceSettings
+
+[TwinScreen_HardwareDeviceSettings]
+HKR,,"UpperFilters",%REG_MULTI_SZ%,"IndirectKmd"
+HKR,"WUDF","DeviceGroupId",%REG_SZ%,"TwinScreenGroup"
+
+[TwinScreen_Install.NT.Services]
+AddService=WUDFRd,0x000001fa,WUDFRD_ServiceInstall
+
+[TwinScreen_Install.NT.Wdf]
+UmdfService=TwinScreen,TwinScreen_Install
+UmdfServiceOrder=TwinScreen
+UmdfExtensions = IddCx0102
+UmdfKernelModeClientPolicy = AllowKernelModeClients
+
+[TwinScreen_Install]
+UmdfLibraryVersion=$UMDFVERSION$
+ServiceBinary=%12%\UMDF\TwinScreen.dll
+
+[WUDFRD_ServiceInstall]
+DisplayName  = %WudfRdDisplayName%
+ServiceType  = 1
+StartType    = 3
+ErrorControl = 1
+ServiceBinary = %12%\WUDFRd.sys
+
+[DestinationDirs]
+UMDriverCopy=12,UMDF
+
+[UMDriverCopy]
+TwinScreen.dll
+
+; ====================== Generic ======================
+
+[Strings]
+ManufacturerName = "TwinScreen"
+DiskName = "TwinScreen Installation Disk"
+WudfRdDisplayName = "Windows Driver Foundation - User-mode Driver Framework Reflector"
+DeviceName = "TwinScreen Virtual Display"
+
+REG_MULTI_SZ  = 0x00010000
+REG_SZ        = 0x00000000
+REG_EXPAND_SZ = 0x00020000
+REG_DWORD     = 0x00010001
