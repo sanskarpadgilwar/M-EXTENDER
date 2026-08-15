@@ -36,6 +36,7 @@ private:
     SOCKET listen_sock_ = INVALID_SOCKET;
     SOCKET client_sock_ = INVALID_SOCKET;
     uint32_t seq_ = 0;
+    uint64_t ts0_ns_ = 0; /* steady_clock timestamp at client connect */
 };
 
 }  // namespace twin

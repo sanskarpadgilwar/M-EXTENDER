@@ -1,5 +1,7 @@
 #include "net/server.h"
 
+#include <chrono>
+
 #include <ws2tcpip.h>
 
 #include <cstring>
@@ -80,6 +82,10 @@ bool TcpServer::WaitForClient(int timeout_ms) {
     client_sock_ = ::accept(listen_sock_, nullptr, nullptr);
     if (client_sock_ == INVALID_SOCKET) return false;
     set_nodelay(client_sock_);
+    /* Session epoch: ts_us and seq are relative to this connection. */
+    seq_ = 0;
+    ts0_ns_ = static_cast<uint64_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count());
     Log("client connected");
     return true;
 }
@@ -98,6 +104,14 @@ bool TcpServer::SendFrame(uint16_t type, const void* payload, uint32_t len) {
     h.version = SP_VERSION;
     h.type = type;
     h.seq = ++seq_;
+    h.ts_us = 0;
+    if (ts0_ns_) {
+        h.ts_us = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch() -
+                std::chrono::nanoseconds(ts0_ns_))
+                .count());
+    }
     h.payload_len = len;
     if (!send_all(client_sock_, &h, sizeof(h))) {
         Disconnect();
