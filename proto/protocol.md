@@ -91,7 +91,16 @@ Rules:
 | 1    | new target bitrate (bps) |
 | 2    | toggle stats overlay     |
 
-## Audio (phase 2)
+## Audio
 
-`sp_audio_frame`: sample_rate, channels, bytes_per_sample, then raw interleaved
-PCM. Decoded by the tablet into `AudioTrack` with `MODE_STREAM` + small buffer.
+`sp_audio_frame`: sample_rate (u32), codec (u8), channels (u8),
+bytes_per_sample (u16), then the audio payload:
+
+| codec | payload                                   | tablet decode path          |
+|-------|-------------------------------------------|-----------------------------|
+| 0     | raw interleaved s16 PCM                   | `AudioTrack` write-through  |
+| 1     | AAC-LC in 7-byte ADTS headers (48 kHz)    | MediaCodec `mp4a-latm` with `KEY_IS_ADTS=1` → `AudioTrack` |
+
+Payloads are 1024-sample frames (AAC one ADTS frame each; PCM one 1024-sample
+stereo frame each). The host only captures while the render device is playing,
+so silence costs no bandwidth.

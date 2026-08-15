@@ -17,6 +17,7 @@ class RenderView @JvmOverloads constructor(
 ) : SurfaceView(context, attrs), SurfaceHolder.Callback {
 
     private var player: VideoPlayer? = null
+    private var audioPlayer: AudioPlayer? = null
 
     init {
         holder.addCallback(this)
@@ -29,6 +30,10 @@ class RenderView @JvmOverloads constructor(
         }
         p.start()
         player = p
+
+        val ap = AudioPlayer(client)
+        ap.start()
+        audioPlayer = ap
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -38,5 +43,7 @@ class RenderView @JvmOverloads constructor(
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         player?.stop()
         player = null
+        audioPlayer?.stop()
+        audioPlayer = null
     }
 }

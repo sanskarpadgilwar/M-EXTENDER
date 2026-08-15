@@ -8,7 +8,7 @@ second monitor for Windows over USB (ADB) or Wi-Fi, with touch/stylus input.
 │  IddCx virtual display driver  (fork of MS IndirectDisplay)     │      │  MediaCodec HW decoder            │
 │  Desktop Duplication API (DXGI) capture                         │      │  SurfaceView render               │
 │  HW H.264/HEVC encoder (NVENC/QSV/AMF)                          │◄────►│  Touch/Stylus capture             │
-│  TCP transport (USB ADB forward / Wi-Fi)                        │      │  Low-latency AudioTrack (todo)    │
+│  TCP transport (USB ADB forward / Wi-Fi)                        │      │  Low-latency AudioTrack (AAC)     │
 │  Input injection (SendInput + InjectTouchInput)                 │      └──────────────────────────────────┘
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -87,6 +87,10 @@ Done:
 - **host** input: mouse (`SendInput`) + touch/stylus (USER32 `InjectTouchInput`)
 - **tablet** connect UI, TCP client, MediaCodec HW decode, multitouch+stylus
   input sender
+- **host+tablet** audio: WASAPI loopback capture → Media Foundation AAC-LC
+  encoder → ADTS on the wire → MediaCodec decode → AudioTrack (the tablet also
+  accepts raw PCM; capture only produces frames while the render device is
+  actually playing, so silence costs no bandwidth)
 - **tablet** Wi-Fi polish: auto-reconnect with exponential backoff +
   on-screen stats overlay (fps, Mbps, queue depth, connection state)
 - **driver/** UMDF2 IddCx virtual display driver (adapter + EDID monitor +
@@ -101,9 +105,8 @@ Remaining:
    dynamic bitrate needs a driver whose `MFXVideoENCODE_Reset` supports it —
    rejected with `MFX_ERR_INCOMPATIBLE_VIDEO_PARAM` on the 22.430.19.0
    `libmfxhw64.dll` runtime.
-3. Audio (WASAPI loopback → AAC → AudioTrack).
-4. True pen injection (WISP/HID) instead of stylus-as-touch.
-5. Runtime validation of the NVENC and AMF paths on machines with NVIDIA/AMD GPUs.
+3. True pen injection (WISP/HID) instead of stylus-as-touch.
+4. Runtime validation of the NVENC and AMF paths on machines with NVIDIA/AMD GPUs.
 
 ## Latency budget (USB, hardware encode)
 

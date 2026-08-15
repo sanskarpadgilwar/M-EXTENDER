@@ -32,6 +32,7 @@ class Client(
         private const val TAG = "TwinClient"
         private const val CONNECT_TIMEOUT_MS = 5000
         private const val MAX_QUEUED_FRAMES = 4
+        private const val MAX_QUEUED_AUDIO_FRAMES = 80
         private const val RECONNECT_BASE_MS = 1000L
         private const val RECONNECT_MAX_MS = 8000L
         private const val STATS_WINDOW_MS = 1000L
@@ -45,6 +46,7 @@ class Client(
     private val stopRequested = AtomicBoolean(false)
 
     val frames = ConcurrentLinkedQueue<Protocol.VideoFrame>()
+    val audioFrames = ConcurrentLinkedQueue<Protocol.AudioFrame>()
     @Volatile
     var ack: Protocol.Ack? = null
         private set
@@ -77,6 +79,8 @@ class Client(
     fun isConnected(): Boolean = connected.get()
 
     fun nextFrame(): Protocol.VideoFrame? = frames.poll()
+
+    fun nextAudioFrame(): Protocol.AudioFrame? = audioFrames.poll()
 
     /** Stops the client for good; the reconnect loop exits and [onDisconnected] fires. */
     fun disconnect() {
@@ -111,6 +115,7 @@ class Client(
                     out = null
                 }
                 frames.clear()
+                audioFrames.clear()
                 queueDepth = 0
             }
             if (stopRequested.get()) break
@@ -217,6 +222,11 @@ class Client(
                     frames.add(f)
                     queueDepth = frames.size
                     accumulateStats(payload.size)
+                }
+                Protocol.MSG_AUDIO_FRAME -> {
+                    val f = Protocol.parseAudioFrame(payload)
+                    while (audioFrames.size >= MAX_QUEUED_AUDIO_FRAMES) audioFrames.poll()
+                    audioFrames.add(f)
                 }
                 Protocol.MSG_CONTROL -> { /* bitrate/stats updates; ignore for now */ }
                 Protocol.MSG_ERROR -> Log.w(TAG, "host error frame")

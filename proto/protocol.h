@@ -133,10 +133,10 @@ typedef struct sp_control {
 /* SP_MSG_AUDIO_FRAME payload (phase 2). */
 typedef struct sp_audio_frame {
     uint32_t sample_rate;
+    uint8_t  codec;            /* 0 = raw PCM (s16le), 1 = AAC (ADTS) */
     uint8_t  channels;
-    uint8_t  bytes_per_sample;
-    uint16_t reserved;
-    /* raw PCM samples follow */
+    uint16_t bytes_per_sample; /* PCM only: 2 (s16le); 0 for AAC */
+    /* raw PCM samples follow (codec 0) or AAC ADTS data (codec 1) */
 } sp_audio_frame;
 
 /* SP_MSG_ERROR payload. */

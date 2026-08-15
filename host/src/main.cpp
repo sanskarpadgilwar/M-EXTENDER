@@ -8,6 +8,8 @@
 #include <vector>
 
 #include "protocol.h"
+#include "audio/aac.h"
+#include "audio/capture.h"
 #include "capture/capture.h"
 #include "encode/encoder.h"
 #include "encode/nvenc.h"
@@ -98,6 +100,10 @@ uint32_t ClampBitrate(uint32_t b) {
     constexpr uint32_t kMax = 40'000'000;  /* 40 Mbps */
     return b < kMin ? kMin : (b > kMax ? kMax : b);
 }
+
+constexpr uint32_t kAudioRate = 48000;
+constexpr uint16_t kAudioChannels = 2;
+constexpr uint32_t kAudioBitrate = 128'000;
 
 }  // namespace
 
@@ -199,6 +205,18 @@ int main(int argc, char** argv) {
     twin::InputInjector inject;
     inject.Init(cap.OffsetX(), cap.OffsetY(), cap.Width(), cap.Height());
 
+    /* ---- audio: WASAPI loopback -> AAC ADTS ---- */
+    twin::AudioCapture audio_cap;
+    twin::AacEncoder aac;
+    bool audio_on = false;
+    if (audio_cap.Start(kAudioRate) && aac.Init(kAudioRate, kAudioChannels, kAudioBitrate)) {
+        audio_on = true;
+        twin::Log("audio pipeline on (%u Hz %u ch, AAC %u bps)",
+                  kAudioRate, kAudioChannels, kAudioBitrate);
+    } else {
+        twin::Log("audio unavailable; running without sound");
+    }
+
     /* ---- main loop ---- */
     bool keyframe_pending = true;
     while (true) {
@@ -225,6 +243,33 @@ int main(int argc, char** argv) {
                     if (!srv.SendFrame(SP_MSG_VIDEO_FRAME, frame.data(),
                                        static_cast<uint32_t>(frame.size()))) {
                         twin::Log("send failed; client gone");
+                        break;
+                    }
+                }
+            }
+        }
+
+        /* Drain captured audio and stream it as AAC ADTS frames. */
+        if (audio_on) {
+            std::vector<int16_t> pcm;
+            std::vector<uint8_t> aac_frame;
+            while (audio_cap.PopFrame(pcm)) {
+                aac_frame.clear();
+                if (aac.Encode(pcm.data(), static_cast<uint32_t>(pcm.size() / 2), aac_frame)) {
+                    sp_audio_frame af{};
+                    af.sample_rate = kAudioRate;
+                    af.codec = 1; /* AAC ADTS */
+                    af.channels = kAudioChannels;
+                    af.bytes_per_sample = 0;
+
+                    std::vector<uint8_t> frame;
+                    frame.reserve(sizeof(af) + aac_frame.size());
+                    frame.insert(frame.end(), reinterpret_cast<uint8_t*>(&af),
+                                 reinterpret_cast<uint8_t*>(&af) + sizeof(af));
+                    frame.insert(frame.end(), aac_frame.begin(), aac_frame.end());
+                    if (!srv.SendFrame(SP_MSG_AUDIO_FRAME, frame.data(),
+                                       static_cast<uint32_t>(frame.size()))) {
+                        twin::Log("audio send failed; client gone");
                         break;
                     }
                 }
@@ -262,5 +307,7 @@ int main(int argc, char** argv) {
     }
 
     twin::Log("shutting down");
+    audio_cap.Stop();
+    aac.Shutdown();
     return 0;
 }

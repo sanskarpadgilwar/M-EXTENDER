@@ -14,6 +14,8 @@ set(TWIN_SOURCES
     src/util/log.cpp
     src/net/server.cpp
     src/capture/capture.cpp
+    src/audio/capture.cpp
+    src/audio/aac.cpp
     src/encode/encoder.cpp
     src/encode/nvenc.cpp
     src/encode/color.cpp
@@ -67,6 +69,7 @@ endif()
 
 target_link_libraries(twinhost PRIVATE
     d3d11 dxgi dxguid d3d12 d3dcompiler ws2_32
+    ole32 mfplat mf mfuuid uuid
 )
 
 if(MSVC)

@@ -17,6 +17,9 @@ object Protocol {
     const val CODEC_H264 = 0
     const val CODEC_HEVC = 1
 
+    const val CODE_AUDIO_PCM = 0
+    const val CODE_AUDIO_AAC = 1
+
     const val MSG_HANDSHAKE = 1
     const val MSG_HANDSHAKE_ACK = 2
     const val MSG_VIDEO_FRAME = 3
@@ -65,6 +68,13 @@ object Protocol {
         val pressure: Int,
         val tiltX: Int,
         val tiltY: Int,
+    )
+
+    data class AudioFrame(
+        val sampleRate: Int,
+        val codec: Int,
+        val channels: Int,
+        val data: ByteArray,
     )
 
     private fun buf(n: Int): ByteBuffer =
@@ -132,6 +142,17 @@ object Protocol {
             bitrate = b.int.toLong() and 0xFFFFFFFFL,
             fps = b.short.toInt() and 0xFFFF,
         )
+    }
+
+    fun parseAudioFrame(payload: ByteArray): AudioFrame {
+        val b = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
+        val rate = b.int
+        val codec = b.get().toInt()
+        val channels = b.get().toInt()
+        b.short // bytes_per_sample
+        val data = ByteArray(b.remaining())
+        b.get(data)
+        return AudioFrame(rate, codec, channels, data)
     }
 
     fun parseVideoFrame(payload: ByteArray): VideoFrame {
