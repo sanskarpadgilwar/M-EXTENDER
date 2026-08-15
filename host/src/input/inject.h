@@ -10,9 +10,9 @@ namespace twin {
  * Converts tablet input events into Windows input.
  *
  * Mouse: SendInput (absolute, virtual-screen normalized).
- * Touch: Windows.UI.Input.Injection (InjectTouchInput) on a dedicated STA
- *        thread with a message pump. Requires C++/WinRT headers (auto-detected
- *        by CMake); falls back to a no-op when unavailable.
+ * Touch: USER32 InitializeTouchInjection/InjectTouchInput (winuser.h). This is
+ *        the classic desktop touch-injection API: no WinRT, no extra headers.
+ *        Coordinates are physical screen pixels (monitor offset + local pos).
  * Stylus: MVP routes STYLUS_* through touch; true pen needs WISP/HID-level
  *         injection.
  *
@@ -34,11 +34,10 @@ public:
 private:
     void InjectMouse(uint16_t x, uint16_t y, uint8_t buttons, uint8_t type);
     void InjectTouch(uint16_t x, uint16_t y, uint8_t type, uint32_t contact);
-    void StartTouchThread();
 
     int32_t offset_x_ = 0, offset_y_ = 0;
     uint32_t monitor_w_ = 0, monitor_h_ = 0;
-    bool touch_thread_started_ = false;
+    bool touch_ok_ = false;
 };
 
 }  // namespace twin

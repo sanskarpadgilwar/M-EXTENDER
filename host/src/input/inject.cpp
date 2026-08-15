@@ -2,105 +2,31 @@
 
 #include <windows.h>
 
-#include <vector>
-
 #include "util/log.h"
-
-#ifdef TWIN_HAVE_CPPWINRT
-#include <winrt/base.h>
-#include <winrt/Windows.Foundation.h>
-#include <winrt/Windows.Foundation.Collections.h>
-#include <winrt/Windows.UI.Input.Injection.h>
-#endif
 
 namespace twin {
 
-#ifdef TWIN_HAVE_CPPWINRT
-
 namespace {
 
-constexpr UINT WM_INJECT_TOUCH = WM_APP + 1;
-
-using winrt::Windows::Foundation::Rect;
-using winrt::Windows::UI::Input::Injection::InjectedInputPointerInfo;
-using winrt::Windows::UI::Input::Injection::InjectedInputPointerOptions;
-using winrt::Windows::UI::Input::Injection::InjectedInputPoint;
-using winrt::Windows::UI::Input::Injection::InjectedInputTouchInfo;
-using winrt::Windows::UI::Input::Injection::InjectedInputVisualizer;
-
-struct TouchPayload {
-    std::vector<InjectedInputTouchInfo> items;
-};
-
-InjectedInputVisualizer g_visualizer{nullptr};
-HANDLE g_thread_ready = nullptr;
-DWORD g_thread_id = 0;
-volatile bool g_running = false;
-
-/*
- * The injection API demands an STA thread with a message queue. Run one and
- * marshal injections to it with a window message so the call always happens on
- * that thread.
- */
-DWORD WINAPI TouchThreadProc(LPVOID) {
-    winrt::init_apartment(winrt::apartment_type::single_threaded);
-    try {
-        g_visualizer = InjectedInputVisualizer::CreateInputInjector();
-    } catch (winrt::hresult_error const& e) {
-        Log("touch injection init failed: 0x%08x", e.code().value);
-        g_visualizer = nullptr;
-    }
-    SetEvent(g_thread_ready);
-
-    MSG msg;
-    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-        if (msg.message == WM_INJECT_TOUCH) {
-            auto* p = reinterpret_cast<TouchPayload*>(msg.lParam);
-            if (p) {
-                if (g_visualizer) g_visualizer.InjectTouchInput(p->items);
-                delete p;
-            }
-        }
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
-    }
-    g_running = false;
-    return 0;
-}
-
-InjectedInputPointerOptions ToPointerOptions(uint8_t type) {
+/* Converts a tablet stylus event into the matching touch pointer flags. */
+DWORD TouchFlagsForType(uint8_t type) {
     switch (type) {
         case SP_INPUT_STYLUS_DOWN:
-            return InjectedInputPointerOptions::New |
-                   InjectedInputPointerOptions::InContact;
+            return POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE |
+                   POINTER_FLAG_INCONTACT;
         case SP_INPUT_STYLUS_MOVE:
-            return InjectedInputPointerOptions::InContact;
+            return POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE |
+                   POINTER_FLAG_INCONTACT;
         case SP_INPUT_STYLUS_UP:
-            return InjectedInputPointerOptions::Up;
+            return POINTER_FLAG_UP;
         case SP_INPUT_CANCEL:
-            return InjectedInputPointerOptions::Canceled;
+            return POINTER_FLAG_CANCELED | POINTER_FLAG_UP;
         default:
-            return InjectedInputPointerOptions::None;
+            return 0;
     }
 }
 
 }  // namespace
-
-InputInjector::~InputInjector() {
-    if (g_running && g_thread_id) {
-        PostThreadMessageW(g_thread_id, WM_QUIT, 0, 0);
-    }
-    if (g_thread_ready) {
-        CloseHandle(g_thread_ready);
-        g_thread_ready = nullptr;
-    }
-}
-
-#else
-
-InputInjector::~InputInjector() = default;
-
-#endif
 
 bool InputInjector::Init(int32_t offset_x, int32_t offset_y, uint32_t monitor_w,
                          uint32_t monitor_h) {
@@ -108,25 +34,16 @@ bool InputInjector::Init(int32_t offset_x, int32_t offset_y, uint32_t monitor_w,
     offset_y_ = offset_y;
     monitor_w_ = monitor_w;
     monitor_h_ = monitor_h;
-    StartTouchThread();
-    return true;
-}
 
-void InputInjector::StartTouchThread() {
-#ifdef TWIN_HAVE_CPPWINRT
-    if (touch_thread_started_) return;
-    touch_thread_started_ = true;
-    g_thread_ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!g_thread_ready) return;
-    HANDLE h = CreateThread(nullptr, 0, TouchThreadProc, nullptr, 0, &g_thread_id);
-    if (!h) {
-        Log("touch thread create failed");
-        return;
+    /* 16 simultaneous contacts is plenty for a stylus; feedback rings make
+     * injected touch visible. */
+    if (!InitializeTouchInjection(16, TOUCH_FEEDBACK_INDIRECT)) {
+        Log("touch injection init failed: %u", GetLastError());
+        touch_ok_ = false;
+    } else {
+        touch_ok_ = true;
     }
-    WaitForSingleObject(g_thread_ready, 5000);
-    g_running = true;
-    CloseHandle(h);
-#endif
+    return true;
 }
 
 void InputInjector::InjectBatch(const sp_input_batch* batch) {
@@ -186,41 +103,34 @@ void InputInjector::InjectMouse(uint16_t x, uint16_t y, uint8_t buttons,
 
 void InputInjector::InjectTouch(uint16_t x, uint16_t y, uint8_t type,
                                 uint32_t contact) {
-#ifdef TWIN_HAVE_CPPWINRT
-    if (!g_visualizer) return;
+    if (!touch_ok_) return;
 
-    int dpi = GetDpiForSystem();
-    if (dpi <= 0) dpi = 96;
-    float sx = static_cast<float>(offset_x_ + x) * 96.0f / dpi;
-    float sy = static_cast<float>(offset_y_ + y) * 96.0f / dpi;
+    /* InjectTouchInput uses physical screen pixels; pointerId must stay within
+     * the 0..maxCount-1 range configured at init. */
+    POINTER_TOUCH_INFO pt{};
+    pt.pointerInfo.pointerType = PT_TOUCH;
+    pt.pointerInfo.pointerId = contact % 16;
+    pt.pointerInfo.pointerFlags = TouchFlagsForType(type);
+    pt.pointerInfo.ptPixelLocation.x = offset_x_ + x;
+    pt.pointerInfo.ptPixelLocation.y = offset_y_ + y;
+    pt.touchFlags = TOUCH_FLAG_NONE;
+    pt.touchMask = TOUCH_MASK_CONTACTAREA | TOUCH_MASK_PRESSURE;
+    pt.pressure = 32000;
+    pt.rcContact.left = pt.pointerInfo.ptPixelLocation.x - 2;
+    pt.rcContact.top = pt.pointerInfo.ptPixelLocation.y - 2;
+    pt.rcContact.right = pt.pointerInfo.ptPixelLocation.x + 2;
+    pt.rcContact.bottom = pt.pointerInfo.ptPixelLocation.y + 2;
 
-    auto* p = new TouchPayload();
-    InjectedInputTouchInfo info;
-    auto pi = info.PointerInfo();
-    pi.PointerId(contact);
-    pi.PointerOptions(ToPointerOptions(type));
-    pi.PixelLocation(InjectedInputPoint{sx, sy});
-    info.PointerInfo(pi);
-    info.Pressure(0.5f);
-    info.Contact(Rect{0, 0, 1, 1});
-    p->items.push_back(info);
-
-    if (!PostThreadMessageW(g_thread_id, WM_INJECT_TOUCH, 0,
-                            reinterpret_cast<LPARAM>(p))) {
-        delete p;
-        Log("touch injection post failed: %u", GetLastError());
+    if (!InjectTouchInput(1, &pt)) {
+        /* ERROR_NOT_READY just means frames arrived <0.1 ms apart; retry the
+         * next one. Anything else is a real failure. */
+        DWORD err = GetLastError();
+        if (err != ERROR_NOT_READY) {
+            Log("touch injection failed: %u", err);
+        }
     }
-#else
-    static bool warned = false;
-    if (!warned) {
-        warned = true;
-        Log("touch injection disabled (C++/WinRT headers not found)");
-    }
-    (void)x;
-    (void)y;
-    (void)type;
-    (void)contact;
-#endif
 }
+
+InputInjector::~InputInjector() = default;
 
 }  // namespace twin

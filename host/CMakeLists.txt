@@ -69,35 +69,6 @@ target_link_libraries(twinhost PRIVATE
     d3d11 dxgi dxguid d3d12 d3dcompiler ws2_32
 )
 
-# C++/WinRT projections (Windows.UI.Input.Injection) ship in the Windows SDK
-# under Include/<ver>/cppwinrt. Enable touch injection when they are present;
-# otherwise inject.cpp compiles a runtime-disabled stub.
-set(CPPWINRT_DIR "")
-if(DEFINED ENV{WindowsSdkDir})
-    set(WIN_KITS_ROOT "$ENV{WindowsSdkDir}")
-elseif(EXISTS "C:/Program Files (x86)/Windows Kits/10/Include")
-    set(WIN_KITS_ROOT "C:/Program Files (x86)/Windows Kits/10/Include/..")
-endif()
-if(WIN_KITS_ROOT AND EXISTS "${WIN_KITS_ROOT}/Include")
-    file(GLOB WIN_KITS_VERSIONS RELATIVE "${WIN_KITS_ROOT}/Include"
-         "${WIN_KITS_ROOT}/Include/*")
-    list(SORT WIN_KITS_VERSIONS ORDER DESCENDING)
-    foreach(v IN LISTS WIN_KITS_VERSIONS)
-        if(EXISTS "${WIN_KITS_ROOT}/Include/${v}/cppwinrt/winrt/Windows.UI.Input.Injection.h")
-            set(CPPWINRT_DIR "${WIN_KITS_ROOT}/Include/${v}/cppwinrt")
-            break()
-        endif()
-    endforeach()
-endif()
-if(CPPWINRT_DIR)
-    message(STATUS "C++/WinRT found: ${CPPWINRT_DIR}")
-    target_include_directories(twinhost PRIVATE "${CPPWINRT_DIR}")
-    target_compile_definitions(twinhost PRIVATE TWIN_HAVE_CPPWINRT=1)
-    target_link_libraries(twinhost PRIVATE windowsapp)
-else()
-    message(WARNING "C++/WinRT not found; touch injection disabled")
-endif()
-
 if(MSVC)
     target_compile_options(twinhost PRIVATE /W4 /permissive-)
 endif()
