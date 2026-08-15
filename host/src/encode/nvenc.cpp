@@ -268,6 +268,15 @@ bool NvEncoder::SetBitrate(uint32_t bitrate) {
     return true;
 }
 
+bool NvEncoder::Resize(uint32_t w, uint32_t h) {
+    if (!configured_)
+        return false;
+    Stop();
+    const uint32_t fps = fps_;
+    const uint32_t bitrate = bitrate_;
+    return Start(w, h, fps, bitrate);
+}
+
 void NvEncoder::Stop() {
     if (!api_) return;
     if (registered_input_) {

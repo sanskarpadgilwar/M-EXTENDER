@@ -15,7 +15,6 @@ bool ScreenCapture::Start(HMONITOR hmon) {
     }
 
     Microsoft::WRL::ComPtr<IDXGIAdapter1> found_adapter;
-    Microsoft::WRL::ComPtr<IDXGIOutput1> found_output;
 
     Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
     for (UINT ai = 0; factory->EnumAdapters1(ai, &adapter) != DXGI_ERROR_NOT_FOUND;
@@ -26,14 +25,14 @@ bool ScreenCapture::Start(HMONITOR hmon) {
             DXGI_OUTPUT_DESC d;
             out->GetDesc(&d);
             if (d.Monitor == hmon) {
-                out.As(&found_output);
+                out.As(&output_);
                 adapter.As(&found_adapter);
                 break;
             }
         }
-        if (found_output) break;
+        if (output_) break;
     }
-    if (!found_output) {
+    if (!output_) {
         Log("monitor 0x%p not found among outputs", hmon);
         return false;
     }
@@ -48,14 +47,14 @@ bool ScreenCapture::Start(HMONITOR hmon) {
         return false;
     }
 
-    hr = found_output->DuplicateOutput(device_.Get(), &dup_);
+    hr = output_->DuplicateOutput(device_.Get(), &dup_);
     if (FAILED(hr)) {
         Log("DuplicateOutput failed 0x%08x", hr);
         return false;
     }
 
     DXGI_OUTPUT_DESC od;
-    found_output->GetDesc(&od);
+    output_->GetDesc(&od);
     width_ = static_cast<uint32_t>(od.DesktopCoordinates.right - od.DesktopCoordinates.left);
     height_ = static_cast<uint32_t>(od.DesktopCoordinates.bottom - od.DesktopCoordinates.top);
     offset_x_ = od.DesktopCoordinates.left;
@@ -73,6 +72,7 @@ void ScreenCapture::Stop() {
         dup_.Reset();
     }
     copy_.Reset();
+    output_.Reset();
     ctx_.Reset();
     device_.Reset();
 }
@@ -87,8 +87,27 @@ bool ScreenCapture::Capture(ID3D11Texture2D** out_tex) {
         return false;
     }
     if (FAILED(hr)) {
-        Log("AcquireNextFrame failed 0x%08x", hr);
         dup_->ReleaseFrame();
+        if (hr == DXGI_ERROR_ACCESS_LOST && output_) {
+            /*
+             * The DDA interface dies when the output mode/session changes
+             * (resolution change, lock screen, driver reset). Re-acquire it
+             * so capture resumes instead of going deaf forever. A locked
+             * desktop yields E_ACCESSDENIED, so back off and retry so the
+             * host picks up again once the session is unlocked.
+             */
+            dup_.Reset();
+            const DWORD now = ::GetTickCount();
+            if (now >= next_reacquire_) {
+                Log("capture: access lost; re-acquiring output duplication");
+                hr = output_->DuplicateOutput(device_.Get(), &dup_);
+                next_reacquire_ = now + 1000; /* at most once per second */
+                if (FAILED(hr))
+                    Log("capture: re-acquire failed 0x%08x (retry in 1s)", hr);
+            }
+            return false;
+        }
+        Log("AcquireNextFrame failed 0x%08x", hr);
         return false;
     }
 

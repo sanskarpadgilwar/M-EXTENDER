@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,7 @@
 #include "input/inject.h"
 #include "net/server.h"
 #include "util/log.h"
+#include "util/scaler.h"
 #ifdef TWIN_HAVE_QSV
 #include "encode/qsv.h"
 #endif
@@ -104,6 +106,19 @@ uint32_t ClampBitrate(uint32_t b) {
 constexpr uint32_t kAudioRate = 48000;
 constexpr uint16_t kAudioChannels = 2;
 constexpr uint32_t kAudioBitrate = 128'000;
+
+/* Adaptive resolution. Congestion is detected as the smoothed time a video
+ * frame spends in SendFrame (TCP backpressure when the tablet can't drain);
+ * the encode size steps down to cut bits per frame, and back up when clear.
+ * Scaling happens on the GPU (util/scaler.h) before the encoder sees the
+ * frame, so every encoder path is covered. */
+constexpr double kScaleSteps[] = {1.0, 0.75, 0.5, 0.375};
+constexpr int kScaleCount =
+    static_cast<int>(sizeof(kScaleSteps) / sizeof(kScaleSteps[0]));
+constexpr double kSendUpMs = 18.0;   /* avg send time above this = congested */
+constexpr double kSendDownMs = 6.0;  /* below this = clear */
+constexpr int kSendUpFrames = 45;    /* ~1.5 s of congested video frames */
+constexpr int kSendDownFrames = 150; /* ~5 s of clear video frames */
 
 }  // namespace
 
@@ -205,6 +220,19 @@ int main(int argc, char** argv) {
     twin::InputInjector inject;
     inject.Init(cap.OffsetX(), cap.OffsetY(), cap.Width(), cap.Height());
 
+    /* ---- adaptive resolution (GPU downscale under congestion) ---- */
+    twin::GpuScaler scaler;
+    const bool adaptive = scaler.Init(cap.Device());
+    int scale_idx = 0;             /* index into kScaleSteps (0 = native) */
+    uint32_t cur_w = cap.Width();  /* size the encoder is configured for */
+    uint32_t cur_h = cap.Height();
+    double avg_send_ms = 0.0;
+    int send_up_streak = 0, send_down_streak = 0;
+    if (!adaptive)
+        twin::Log("adaptive resolution disabled (scaler init failed)");
+    else
+        twin::Log("adaptive resolution on (%ux%u native)", cur_w, cur_h);
+
     /* ---- audio: WASAPI loopback -> AAC ADTS ---- */
     twin::AudioCapture audio_cap;
     twin::AacEncoder aac;
@@ -222,8 +250,45 @@ int main(int argc, char** argv) {
     while (true) {
         ID3D11Texture2D* tex = nullptr;
         if (cap.Capture(&tex)) {
+            /* Apply the current scale step: encode a GPU-downscaled copy so a
+             * smaller resolution carries the same screen content cheaper. */
+            ID3D11Texture2D* enc_tex = tex;
+            if (adaptive && scale_idx > 0) {
+                const double f = kScaleSteps[scale_idx];
+                const uint32_t nw = static_cast<uint32_t>(cap.Width() * f) & ~1u;
+                const uint32_t nh = static_cast<uint32_t>(cap.Height() * f) & ~1u;
+                if (nw != cur_w || nh != cur_h) {
+                    if (enc->Resize(nw, nh)) {
+                        cur_w = nw;
+                        cur_h = nh;
+                        keyframe_pending = true; /* tablet must resync to new SPS */
+                        twin::Log("adaptive: scaling to %ux%u (%s)", cur_w, cur_h,
+                                  enc->Name());
+                    } else {
+                        twin::Log("adaptive: %s cannot resize; staying native",
+                                  enc->Name());
+                        scale_idx = 0;
+                        cur_w = cap.Width();
+                        cur_h = cap.Height();
+                    }
+                }
+                enc_tex = scaler.Scale(tex, cur_w, cur_h);
+                if (!enc_tex)
+                    enc_tex = tex; /* fall back to native-size encode */
+            } else if (adaptive && scale_idx == 0 &&
+                       (cur_w != cap.Width() || cur_h != cap.Height())) {
+                /* Back to native: re-initialize at the original size. */
+                if (enc->Resize(cap.Width(), cap.Height())) {
+                    cur_w = cap.Width();
+                    cur_h = cap.Height();
+                    keyframe_pending = true;
+                    twin::Log("adaptive: scaling back to %ux%u", cur_w, cur_h);
+                }
+            }
+
             twin::EncodedFrame ef;
-            if (enc->Encode(tex, ef)) {
+            const bool enc_ok = enc->Encode(enc_tex, ef);
+            if (enc_ok) {
                 if (!ef.nals.empty() || args.keep_raw) {
                     ef.keyframe = keyframe_pending || ef.keyframe;
                     keyframe_pending = false;
@@ -232,18 +297,59 @@ int main(int argc, char** argv) {
                     sp_video_frame vf{};
                     vf.keyframe = ef.keyframe ? 1 : 0;
                     vf.codec = static_cast<uint8_t>(ef.codec);
-                    vf.display_w = cap.Width();
-                    vf.display_h = cap.Height();
+                    vf.display_w = cur_w;
+                    vf.display_h = cur_h;
 
                     std::vector<uint8_t> frame;
                     frame.reserve(sizeof(vf) + body.size());
                     frame.insert(frame.end(), reinterpret_cast<uint8_t*>(&vf),
                                  reinterpret_cast<uint8_t*>(&vf) + sizeof(vf));
                     frame.insert(frame.end(), body.begin(), body.end());
-                    if (!srv.SendFrame(SP_MSG_VIDEO_FRAME, frame.data(),
-                                       static_cast<uint32_t>(frame.size()))) {
+
+                    /* Congestion signal: how long the frame sat in the socket.
+                     * High while the tablet can't drain; low when it keeps up. */
+                    const auto send_t0 = std::chrono::steady_clock::now();
+                    const bool sent = srv.SendFrame(SP_MSG_VIDEO_FRAME, frame.data(),
+                                                    static_cast<uint32_t>(frame.size()));
+                    const double send_ms =
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - send_t0)
+                            .count();
+                    if (!sent) {
                         twin::Log("send failed; client gone");
                         break;
+                    }
+
+                    if (adaptive) {
+                        avg_send_ms = avg_send_ms == 0.0
+                                          ? send_ms
+                                          : avg_send_ms * 0.9 + send_ms * 0.1;
+                        if (avg_send_ms > kSendUpMs) {
+                            ++send_up_streak;
+                            send_down_streak = 0;
+                        } else if (avg_send_ms < kSendDownMs) {
+                            ++send_down_streak;
+                            send_up_streak = 0;
+                        } else {
+                            send_up_streak = 0;
+                            send_down_streak = 0;
+                        }
+                        if (send_up_streak >= kSendUpFrames && scale_idx < kScaleCount - 1) {
+                            ++scale_idx;
+                            send_up_streak = 0;
+                            twin::Log("adaptive: congested (avg send %.1f ms); "
+                                      "scale %.2f -> %.2f",
+                                      avg_send_ms, kScaleSteps[scale_idx - 1],
+                                      kScaleSteps[scale_idx]);
+                        } else if (send_down_streak >= kSendDownFrames &&
+                                   scale_idx > 0) {
+                            --scale_idx;
+                            send_down_streak = 0;
+                            twin::Log("adaptive: clear (avg send %.1f ms); "
+                                      "scale %.2f -> %.2f",
+                                      avg_send_ms, kScaleSteps[scale_idx + 1],
+                                      kScaleSteps[scale_idx]);
+                        }
                     }
                 }
             }

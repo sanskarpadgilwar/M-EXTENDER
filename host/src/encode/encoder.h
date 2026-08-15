@@ -27,6 +27,9 @@ public:
     virtual bool RequestKeyframe() = 0;
     /* Adaptive bitrate: re-target the encoder; false if unsupported. */
     virtual bool SetBitrate(uint32_t /*bitrate*/) { return false; }
+    /* Adaptive resolution: full re-initialize at the new size (preserving fps
+     * and bitrate). Frames passed to Encode() must be w*h afterwards. */
+    virtual bool Resize(uint32_t /*w*/, uint32_t /*h*/) { return false; }
     /* Hands the encoder the capture's D3D11 device. Encoders that create
      * their own device (NVENC) ignore this; AMF needs it for InitDX11. */
     virtual void SetD3D11Device(ID3D11Device* /*device*/) {}
@@ -42,6 +45,7 @@ public:
     bool Start(uint32_t w, uint32_t h, uint32_t fps, uint32_t bitrate) override;
     bool Encode(ID3D11Texture2D* frame, EncodedFrame& out) override;
     bool RequestKeyframe() override { return true; }
+    bool Resize(uint32_t w, uint32_t h) override;
     const char* Name() const override { return "null"; }
 
 private:

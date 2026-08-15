@@ -12,6 +12,7 @@ endif()
 set(TWIN_SOURCES
     src/main.cpp
     src/util/log.cpp
+    src/util/scaler.cpp
     src/net/server.cpp
     src/capture/capture.cpp
     src/audio/capture.cpp

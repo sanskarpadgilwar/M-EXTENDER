@@ -42,6 +42,7 @@ public:
     bool Encode(ID3D11Texture2D* frame, EncodedFrame& out) override;
     bool RequestKeyframe() override { keyframe_requested_ = true; return true; }
     bool SetBitrate(uint32_t bitrate) override;
+    bool Resize(uint32_t w, uint32_t h) override;
     const char* Name() const override { return "nvenc"; }
 
 private:

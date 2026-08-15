@@ -225,6 +225,15 @@ bool QsvEncoder::Encode(ID3D11Texture2D* frame, EncodedFrame& out) {
     return !out.nals.empty();
 }
 
+bool QsvEncoder::Resize(uint32_t w, uint32_t h) {
+    if (!session_ || !configured_)
+        return false;
+    Stop();
+    const uint32_t fps = fps_;
+    const uint32_t bitrate = bitrate_;
+    return Start(w, h, fps, bitrate);
+}
+
 bool QsvEncoder::SetBitrate(uint32_t bitrate) {
     if (!session_ || !configured_ || !enc_reset_)
         return false;

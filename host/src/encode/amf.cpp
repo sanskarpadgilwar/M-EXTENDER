@@ -232,6 +232,15 @@ bool AmfEncoder::ReadOutput(EncodedFrame& out) {
     return !out.nals.empty();
 }
 
+bool AmfEncoder::Resize(uint32_t w, uint32_t h) {
+    if (!encoder_)
+        return false;
+    Stop();
+    const uint32_t fps = fps_;
+    const uint32_t bitrate = bitrate_;
+    return Start(w, h, fps, bitrate);
+}
+
 bool AmfEncoder::SetBitrate(uint32_t bitrate) {
     if (!encoder_)
         return false;

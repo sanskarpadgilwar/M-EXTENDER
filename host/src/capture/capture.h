@@ -47,10 +47,12 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> ctx_;
     Microsoft::WRL::ComPtr<IDXGIOutputDuplication> dup_;
+    Microsoft::WRL::ComPtr<IDXGIOutput1> output_; /* kept to re-acquire dup_ */
     Microsoft::WRL::ComPtr<ID3D11Texture2D> copy_;
     DXGI_OUTDUPL_FRAME_INFO info_{};
 
     bool running_ = false;
+    DWORD next_reacquire_ = 0; /* throttled re-acquire attempts (ms) */
     uint32_t width_ = 0, height_ = 0;
     int32_t offset_x_ = 0, offset_y_ = 0;
 };

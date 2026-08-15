@@ -15,6 +15,14 @@ bool NullEncoder::Start(uint32_t w, uint32_t h, uint32_t fps, uint32_t bitrate) 
     return true;
 }
 
+bool NullEncoder::Resize(uint32_t w, uint32_t h) {
+    w_ = w;
+    h_ = h;
+    staging_.Reset(); /* re-created from the next frame's desc */
+    Log("NullEncoder: resize -> %ux%u", w, h);
+    return true;
+}
+
 bool NullEncoder::Encode(ID3D11Texture2D* frame, EncodedFrame& out) {
     if (!frame) return false;
 
